@@ -1,4 +1,4 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, Link } from "@tanstack/react-router";
 import { useMemo, useState } from "react";
 import {
   CalendarDays,
@@ -25,6 +25,7 @@ const NAV = [
   { id: "events", label: "ایونت و کنسرت" },
   { id: "money", label: "حسابداری" },
   { id: "people", label: "کارکنان" },
+  { id: "review", label: "ارزیابی" },
   { id: "night", label: "پیام شب" },
 ] as const;
 
@@ -55,7 +56,10 @@ function Home() {
               <p className="text-sm text-muted">کافه فرهنگ گاچو · ایجنت‌ها کار را پیش می‌برند</p>
             </div>
           </div>
-          <div className="flex flex-wrap gap-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <Link to="/site" className="rounded-full bg-clay px-3 py-2 text-sm text-surface">
+              سایت مشتری
+            </Link>
             {ROLES.map((r) => (
               <button
                 key={r.id}
@@ -95,6 +99,7 @@ function Home() {
           {tab === "events" && <EventsPanel />}
           {tab === "money" && role !== "staff" && <MoneyPanel limited={role === "me"} />}
           {tab === "people" && role !== "staff" && <PeoplePanel full={role === "hamzeh"} />}
+          {tab === "review" && <ReviewPanel hideMoney={role === "staff"} />}
           {tab === "night" && <NightPanel />}
         </main>
       </div>
@@ -361,6 +366,75 @@ function PeoplePanel({ full }: { full: boolean }) {
           {full && <p className="mt-2 text-sm">{p.note}</p>}
         </article>
       ))}
+    </div>
+  );
+}
+
+function ReviewPanel({ hideMoney }: { hideMoney: boolean }) {
+  const workshops = useTata((s) => s.workshops);
+  const events = useTata((s) => s.events);
+  const txs = useTata((s) => s.txs);
+  const staff = useTata((s) => s.staff);
+  const approvals = useTata((s) => s.approvals);
+  const nightly = useTata((s) => s.nightly);
+
+  const filled = workshops.reduce((a, w) => a + w.enrolled, 0);
+  const cap = workshops.reduce((a, w) => a + w.capacity, 0);
+  const fill = cap ? filled / cap : 0;
+  const income = txs.filter((t) => t.kind === "in").reduce((a, t) => a + t.amount, 0);
+  const cost = txs.filter((t) => t.kind === "out").reduce((a, t) => a + t.amount, 0);
+  const openTasks = staff.reduce((a, p) => a + p.open, 0);
+  const pending = approvals.filter((a) => a.status === "pending").length;
+  const booked = events.reduce((a, e) => a + e.booked, 0);
+  const seats = events.reduce((a, e) => a + e.seats, 0);
+
+  const rows: { tone: "good" | "bad"; title: string; detail: string }[] = [
+    fill >= 0.6
+      ? { tone: "good", title: "جذب کودک", detail: `${filled} از ${cap} صندلی کارگاه پر است.` }
+      : { tone: "bad", title: "جذب کودک", detail: `فقط ${filled} از ${cap} صندلی پر شده. جای خالی جمعه باید پیگیری شود.` },
+    hideMoney
+      ? income > cost
+        ? { tone: "good", title: "صندوق", detail: "دخل از خرج جلوتر است." }
+        : { tone: "bad", title: "صندوق", detail: "خرج از دخل جلو زده." }
+      : income > cost
+        ? { tone: "good", title: "صندوق", detail: `خالص ${toman(income - cost)} مثبت است.` }
+        : { tone: "bad", title: "صندوق", detail: `خالص ${toman(cost - income)} منفی است.` },
+    openTasks === 0
+      ? { tone: "good", title: "کار تیم", detail: "کار باز روی میز کارکنان نمانده." }
+      : { tone: "bad", title: "کار تیم", detail: `${openTasks} کار هنوز باز است.` },
+    pending === 0
+      ? { tone: "good", title: "تصمیم‌ها", detail: "چیزی منتظر تأیید حمزه نیست." }
+      : { tone: "bad", title: "تصمیم‌ها", detail: `${pending} مورد حساس معطل مانده و اجرا را کند می‌کند.` },
+    booked / seats >= 0.4
+      ? { tone: "good", title: "صحنه و ایونت", detail: `${booked} جا از ${seats} گرفته شده.` }
+      : { tone: "bad", title: "صحنه و ایونت", detail: "کنسرت و بازارچه هنوز خلوت‌اند." },
+    nightly
+      ? { tone: "good", title: "بستن روز", detail: "پیام شب نوشته شده و روند ارزیابی شده." }
+      : { tone: "bad", title: "بستن روز", detail: "هنوز روز بسته نشده؛ سه پیام شب جا مانده." },
+  ];
+
+  const score = Math.round((rows.filter((r) => r.tone === "good").length / rows.length) * 100);
+
+  return (
+    <div className="space-y-4">
+      <section className="rounded-2xl bg-palm p-5 text-sand">
+        <p className="text-sm text-sand/80">امتیاز روند امروز</p>
+        <p className="text-3xl font-bold">{score}</p>
+        <p className="mt-1 text-sm text-sand/80">از ۱۰۰، بر اساس ظرفیت، صندوق، تیم، تصمیم‌ها و صحنه</p>
+      </section>
+      <div className="grid gap-3">
+        {rows.map((r) => (
+          <article
+            key={r.title}
+            className={`rounded-2xl border border-line p-4 ${r.tone === "good" ? "bg-palm-soft" : "bg-clay-soft"}`}
+          >
+            <p className={`text-sm font-semibold ${r.tone === "good" ? "text-palm" : "text-clay"}`}>
+              {r.tone === "good" ? "قوت" : "ضعف"} · {r.title}
+            </p>
+            <p className="mt-1 text-sm">{r.detail}</p>
+          </article>
+        ))}
+      </div>
     </div>
   );
 }

@@ -62,7 +62,14 @@ export type Nightly = {
   at: string;
 };
 
-export type LogItem = {
+export type Chore = {
+  id: string;
+  who: string;
+  text: string;
+  done: boolean;
+};
+
+export type Mark = { paid: boolean; here: boolean };
   id: string;
   text: string;
   at: string;
@@ -78,11 +85,17 @@ type State = {
   approvals: Approval[];
   logs: LogItem[];
   nightly: Nightly | null;
+  marks: Record<string, Mark>;
+  chores: Chore[];
   setRole: (role: Role) => void;
   runAgents: () => void;
   addTx: (kind: "in" | "out", amount: number, note: string) => void;
   decide: (id: string, status: "approved" | "rejected") => void;
   bumpEnroll: (id: string) => void;
+  reserve: (id: string, name: string) => boolean;
+  toggleMark: (workshopId: string, name: string, field: "paid" | "here") => void;
+  toggleChore: (id: string) => void;
+  addChore: (who: string, text: string) => void;
   buildNightly: () => void;
 };
 
@@ -280,6 +293,16 @@ export const useTata = create<State>()(
         },
       ],
       nightly: null,
+      marks: {
+        "w1:سارا": { paid: true, here: false },
+        "w1:علی": { paid: false, here: false },
+      },
+      chores: [
+        { id: "c1", who: "لیشو", text: "خرما و کنجد را روی میز بچین", done: false },
+        { id: "c2", who: "مريم", text: "برگ نخل را خیس کن", done: true },
+        { id: "c3", who: "پسر ۱۷ ساله", text: "ریلز جمعه را بگیر", done: false },
+        { id: "c4", who: "فاطمه", text: "ده پرس رنگینک آماده کن", done: false },
+      ],
       setRole: (role) => set({ role }),
       addTx: (kind, amount, note) =>
         set((s) => ({
@@ -325,6 +348,52 @@ export const useTata = create<State>()(
             const name = nextKid(kids);
             return { ...w, kids: [...kids, name], enrolled: w.enrolled + 1 };
           }),
+        })),
+      reserve: (id, name) => {
+        const clean = name.trim();
+        const w = get().workshops.find((x) => x.id === id);
+        if (!w || !clean || w.enrolled >= w.capacity) return false;
+        if ((w.kids ?? []).includes(clean)) return false;
+        set((s) => ({
+          workshops: s.workshops.map((item) =>
+            item.id === id
+              ? { ...item, enrolled: item.enrolled + 1, kids: [...(item.kids ?? []), clean] }
+              : item,
+          ),
+          txs: [
+            {
+              id: uid(),
+              kind: "in" as const,
+              amount: w.price,
+              note: `رزرو سایت: ${clean} · ${w.title}`,
+              at: `امروز ${nowLabel()}`,
+            },
+            ...s.txs,
+          ],
+          logs: [
+            {
+              id: uid(),
+              text: `${clean} از سایت مشتری برای «${w.title}» رزرو کرد.`,
+              at: nowLabel(),
+            },
+            ...s.logs,
+          ].slice(0, 12),
+        }));
+        return true;
+      },
+      toggleMark: (workshopId, name, field) =>
+        set((s) => {
+          const key = `${workshopId}:${name}`;
+          const prev = s.marks[key] ?? { paid: false, here: false };
+          return { marks: { ...s.marks, [key]: { ...prev, [field]: !prev[field] } } };
+        }),
+      toggleChore: (id) =>
+        set((s) => ({
+          chores: s.chores.map((c) => (c.id === id ? { ...c, done: !c.done } : c)),
+        })),
+      addChore: (who, text) =>
+        set((s) => ({
+          chores: [...s.chores, { id: uid(), who: who.trim() || "تیم", text: text.trim(), done: false }],
         })),
       buildNightly: () => {
         const s = get();
@@ -451,7 +520,18 @@ export const useTata = create<State>()(
         });
       },
     }),
-    { name: "tata-gachu", version: 3 },
+    {
+      name: "tata-gachu",
+      version: 5,
+      migrate: (persisted) => {
+        const s = persisted as Partial<State>;
+        return {
+          ...s,
+          marks: s.marks ?? {},
+          chores: s.chores ?? [],
+        } as State;
+      },
+    },
   ),
 );
 
